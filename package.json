@@ -1,0 +1,12 @@
+{
+  "name": "fhm-website",
+  "version": "7.1.0",
+  "private": true,
+  "description": "FHM website connected to Supabase RAG and Gemini",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
