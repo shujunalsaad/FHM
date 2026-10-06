@@ -1,3 +1,4 @@
+require('dotenv').config();
 // FHM website backend
 // Secrets stay on the server. Never place Gemini/OpenAI/Supabase service-role keys in index.html.
 // PowerShell example:
@@ -14,6 +15,53 @@ const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 const DB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_KEY;
 const EDGE_URL = SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/generate-answer` : '';
+// Server-side embedding
+// The embedding is generated on the server so users do not need
+// to download/run the embedding model on their own device.
+let embedderPromise = null;
+
+async function getEmbedder() {
+  if (!embedderPromise) {
+    embedderPromise = (async () => {
+      const { pipeline } = await import('@huggingface/transformers');
+
+      return pipeline(
+  'feature-extraction',
+  'Xenova/multilingual-e5-small',
+  {
+    dtype: 'q8'
+  }
+);
+    })().catch((error) => {
+      embedderPromise = null;
+      throw error;
+    });
+  }
+
+  return embedderPromise;
+}
+
+async function getEmbedding(text) {
+  const embedder = await getEmbedder();
+
+  const output = await embedder(
+    'query: ' + text,
+    {
+      pooling: 'mean',
+      normalize: true,
+    }
+  );
+
+  const embedding = Array.from(output.data);
+
+  if (embedding.length !== 384) {
+    throw new Error(
+      `Unexpected embedding dimension: ${embedding.length}. Expected 384.`
+    );
+  }
+
+  return embedding;
+}
 
 const TOPIC_ALIASES = {
   'tawhid': 'التوحيد',
@@ -186,20 +234,51 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  if (req.method === 'POST' && req.url === '/api/ask') {
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { question, query_embedding, age_group='adult', learner_type='general', current_level='beginner', language='ar' } = body;
-      if (!question || !Array.isArray(query_embedding) || query_embedding.length !== 384) {
-        return json(res, 400, { error: 'question and a 384-dimensional query_embedding are required' });
-      }
-      const data = await callFhm({ question: String(question).slice(0,500), query_embedding, age_group, learner_type, current_level, language });
-      return json(res, 200, data);
-    } catch (e) {
-      console.error('ASK ERROR:', e.message);
-      return json(res, 500, { error: 'FHM service error', detail: e.message });
+if (req.method === 'POST' && req.url === '/api/ask') {
+  try {
+    const body = JSON.parse(await readBody(req));
+
+    const {
+      question,
+      age_group = 'adult',
+      learner_type = 'general',
+      current_level = 'beginner',
+      language = 'ar'
+    } = body;
+
+    if (!question) {
+      return json(res, 400, {
+        error: 'question is required'
+      });
     }
+
+    // Generate the embedding on the server
+    const query_embedding = await getEmbedding(
+      String(question).slice(0, 500)
+    );
+
+    // Send the question + server-generated embedding
+    // to the source-grounded FHM RAG function.
+    const data = await callFhm({
+      question: String(question).slice(0, 500),
+      query_embedding,
+      age_group,
+      learner_type,
+      current_level,
+      language
+    });
+
+    return json(res, 200, data);
+
+  } catch (e) {
+    console.error('ASK ERROR:', e.message);
+
+    return json(res, 500, {
+      error: 'FHM service error',
+      detail: e.message
+    });
   }
+}
 
   if (req.method === 'GET' && req.url.startsWith('/api/question')) {
     try {

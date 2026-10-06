@@ -1780,114 +1780,42 @@ function tierName(){
 
 /* =========================================================
    EMBEDDINGS
-========================================================= */
-
-async function getEmbedding(text){
-
-  if(!embedder){
-
-    addMsg(
-
-      lang === 'ar'
-
-        ? 'جاري تجهيز نموذج البحث لأول مرة…'
-
-        : 'Preparing the search model for the first time…',
-
-      'bot'
-
-    );
-
-
-    embedder = await pipeline(
-
-      'feature-extraction',
-
-      'Xenova/multilingual-e5-small',
-
-      {
-        dtype:'q8'
-      }
-
-    );
-
-  }
-
-
-  const output = await embedder(
-
-    'query: ' + text,
-
-    {
-      pooling:'mean',
-      normalize:true
-    }
-
-  );
-
-
-  return Array.from(output.data);
-
-}
-
-
-/* =========================================================
-   ASK API
+   The server now generates embeddings.
+   This keeps the Hugging Face model off the user's device.
 ========================================================= */
 
 async function askAPI(question){
 
-  const embedding =
-    await getEmbedding(question);
-
-
-  const response =
-    await fetch(
-
-      '/api/ask',
-
-      {
-
-        method:'POST',
-
-        headers:{
-          'Content-Type':'application/json'
-        },
-
-        body:JSON.stringify({
-
-          question,
-
-          query_embedding:embedding,
-
-          age_group:prof || 'adult',
-
-          learner_type:
-            learnerType || 'general',
-
-          current_level:
-            currentLevel || 'beginner',
-
-          language:lang
-
-        })
-
-      }
-
-    );
-
+  const response = await fetch(
+    '/api/ask',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        question,
+        age_group:prof || 'adult',
+        learner_type:learnerType || 'general',
+        current_level:currentLevel || 'beginner',
+        language:lang
+      })
+    }
+  );
 
   if(!response.ok){
+    let detail = '';
+    try{
+      const errorData = await response.json();
+      detail = errorData?.detail || errorData?.error || '';
+    }catch(_){}
 
     throw new Error(
-      'API ' + response.status
+      'API ' + response.status + (detail ? ': ' + detail : '')
     );
-
   }
 
-
   return await response.json();
-
 }
 
 
